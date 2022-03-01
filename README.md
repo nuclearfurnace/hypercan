@@ -37,3 +37,6 @@ does not build against stable Rust from 1.59.0 and newer: it's a bug, please let
 ## License
 
 HyperCAN is licensed under the MIT license.
+
+[socketcan]: https://en.wikipedia.org/wiki/SocketCAN
+[can_isotp]: https://github.com/hartkopp/can-isotp
