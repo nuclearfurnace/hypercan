@@ -1,0 +1,18 @@
+[package]
+name = "hypercan"
+version = "0.1.0"
+edition = "2021"
+
+license = "MIT"
+
+[dependencies]
+async-trait = "0.1.52"
+clap = { version = "3.1.2", features = ["derive"] }
+embedded-can = "0.3.0"
+futures = "0.3"
+mio = "0.8.0"
+socketcan-isotp = "1.0.0"
+thiserror = "1.0"
+tokio = { version = "1.17.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
