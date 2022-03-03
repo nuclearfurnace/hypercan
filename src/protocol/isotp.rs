@@ -8,7 +8,7 @@ use std::{
 use embedded_can::Id;
 use futures::ready;
 use mio::{event::Source, unix::SourceFd, Interest, Registry, Token};
-use socketcan_isotp::{Error as IsoTpError, IsoTpOptions, IsoTpSocket};
+use socketcan_isotp::{Error as IsoTpError, IsoTpBehaviour, IsoTpOptions, IsoTpSocket};
 use thiserror::Error;
 use tokio::{io::unix::AsyncFd, macros::support::poll_fn, time::timeout};
 
@@ -103,6 +103,13 @@ impl ISOTPSocketBuilder {
         let mut isotp_options = IsoTpOptions::default();
         if self.use_isotp_frame_padding {
             isotp_options.set_txpad_content(0xCC);
+
+            let new_flags = isotp_options
+                .get_flags()
+                .map(|flags| flags | IsoTpBehaviour::CAN_ISOTP_TX_PADDING)
+                .unwrap_or(IsoTpBehaviour::CAN_ISOTP_TX_PADDING);
+
+            isotp_options.set_flags(new_flags);
         }
 
         let socket = IsoTpSocket::open_with_opts(
