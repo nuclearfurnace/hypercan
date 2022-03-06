@@ -1,2 +1,2 @@
-pub mod isotp;
+pub mod can;
 pub mod obd;

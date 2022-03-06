@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     common::error::InvalidResponse,
-    protocol::isotp::{SocketBuildError, SocketError},
+    protocol::can::error::{SocketBuildError, SocketError},
 };
 
 pub use self::service::CurrentDataService;

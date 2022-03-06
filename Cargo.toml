@@ -7,10 +7,12 @@ license = "MIT"
 
 [dependencies]
 async-trait = "0.1.52"
+can = { git = "https://github.com/nuclearfurnace/rust-can" }
 clap = { version = "3.1.2", features = ["derive"] }
-embedded-can = "0.3.0"
+duration-str = "0.3.8"
 futures = "0.3"
 mio = "0.8.0"
+socketcan = "1.7.0"
 socketcan-isotp = "1.0.0"
 thiserror = "1.0"
 tokio = { version = "1.17.0", features = ["full"] }

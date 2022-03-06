@@ -1,5 +1,9 @@
-use clap::{ArgEnum, Parser, Subcommand};
+use std::time::Duration;
+
+use clap::{ArgEnum, Args, Parser, Subcommand};
 use tracing::Level;
+
+use super::addressing::Addressing;
 
 #[derive(Parser)]
 #[clap(name = "hypercan")]
@@ -9,20 +13,20 @@ use tracing::Level;
     about = "A socketcan-based CLI for scanninng and querying OBD-II services/PIDs, UDS services, and more."
 )]
 pub struct AppConfig {
-    /// Name of the socketcan device (i.e. `can0`) to open and use.
-    socket_device_name: String,
-
     /// Logging level.  Defaults to INFO.
     #[clap(long, arg_enum, default_value_t = LogLevel::Info)]
     log_level: LogLevel,
+
+    #[clap(flatten)]
+    can_parameters: CANParameters,
 
     #[clap(subcommand)]
     operation: Command,
 }
 
 impl AppConfig {
-    pub fn socket(&self) -> String {
-        self.socket_device_name.clone()
+    pub fn can_parameters(&self) -> CANParameters {
+        self.can_parameters.clone()
     }
 
     pub fn command(&self) -> Command {
@@ -36,6 +40,27 @@ impl AppConfig {
             LogLevel::Info => Level::INFO,
         }
     }
+}
+
+#[derive(Args, Clone)]
+pub struct CANParameters {
+    #[clap(long)]
+    pub socket_name: String,
+
+    #[clap(long, parse(try_from_str = duration_str::parse), default_value = "2s")]
+    pub read_timeout: Duration,
+
+    #[clap(long, parse(try_from_str = duration_str::parse), default_value = "2s")]
+    pub write_timeout: Duration,
+
+    #[clap(long)]
+    pub isotp_frame_padding: bool,
+
+    #[clap(long, default_value_t = 0xCC)]
+    pub tx_frame_padding: u8,
+
+    #[clap(long, short, arg_enum, default_value_t = Addressing::Standard)]
+    pub addressing: Addressing,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ArgEnum)]
@@ -53,8 +78,5 @@ pub enum Command {
 
     /// Scans for available OBD-II PIDs.
     #[clap(name = "query-available-pids")]
-    QueryAvailablePIDs {
-        #[clap(long, short)]
-        extended: bool,
-    },
+    QueryAvailablePIDs,
 }

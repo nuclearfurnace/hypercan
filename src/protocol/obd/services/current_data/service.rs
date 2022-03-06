@@ -1,14 +1,25 @@
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
+
+use can::identifier::Id;
+use socketcan::CANFrame;
+use tokio::{pin, select, time::sleep};
+use tracing::info;
 
 use crate::{
     common::{
-        addressing::Addressing,
+        config::CANParameters,
         error::{FieldIdentifier, FieldValue, InvalidResponse, InvalidResponseKind},
     },
-    protocol::isotp::ISOTPSocket,
+    protocol::{
+        can::{isotp::ISOTPSocket, raw::RawSocket},
+        obd::services::current_data::decoder::AvailablePidDecoder,
+    },
 };
 
-use super::{decoder::AvailablePidDecoder, QueryError, CURRENT_DATA_SERVICE_ID};
+use super::{QueryError, CURRENT_DATA_SERVICE_ID};
 
 struct AvailablePidRequest {
     query_pid: u8,
@@ -55,7 +66,7 @@ impl AvailablePidRequest {
 
         Ok(AvailablePidResponse {
             offset: self.query_pid,
-            data: [data[0], data[1], data[2], data[3]],
+            data: [data[2], data[3], data[4], data[5]],
         })
     }
 }
@@ -76,43 +87,105 @@ impl AvailablePidResponse {
 }
 
 pub struct CurrentDataService {
-    socket_name: String,
-    addressing: Addressing,
+    can_parameters: CANParameters,
 }
 
 impl CurrentDataService {
-    pub fn new(socket_name: String, addressing: Addressing) -> Self {
-        Self {
-            socket_name,
-            addressing,
-        }
+    pub fn new(can_parameters: CANParameters) -> Self {
+        Self { can_parameters }
     }
 
-    pub async fn query_available_pids(&mut self) -> Result<Vec<u8>, QueryError> {
-        let mut socket = ISOTPSocket::builder()
-            .socket_name(self.socket_name.clone())
-            .source_id(self.addressing.obd_response_address_ecu())
-            .destination_id(self.addressing.obd_broadcast_address())
-            .read_timeout(Duration::from_secs(2))
-            .write_timeout(Duration::from_secs(2))
-            .use_isotp_frame_padding()
+    pub async fn query_available_pids(&mut self) -> Result<HashMap<Id, Vec<u8>>, QueryError> {
+        let addressing = self.can_parameters.addressing;
+
+        // We first issue a broadcast request to see what ECUs are willing to respond to us, and we
+        // do that for a few hundred milliseconds to give them all a chance to transmit.  Once we
+        // have a list of responding identifiers, we run through the normal serialized query process
+        // for each of them individually.
+        let mut raw_socket = RawSocket::builder()
+            .can_parameters(self.can_parameters.clone())
+            .source_id_filter(addressing.obd_response_address_filter())
             .build()?;
 
-        let mut decoder = AvailablePidDecoder::new();
-        while let Some(query_pid) = decoder.next_query_pid() {
-            // Build the request and send it.
-            let request = AvailablePidRequest::from_query_pid(query_pid);
-            let payload = request.payload();
-            socket.write(&payload[..]).await?;
+        // We need to craft our payload manually since we aren't using an ISO-TP socket which adds
+        // the length byte for us automatically.
+        //
+        // TODO: Make this better via `can`, ideally.
+        let broadcast_address = addressing.obd_broadcast_address();
+        let broadcast_request = AvailablePidRequest::from_query_pid(0);
+        let request_payload = broadcast_request.payload();
+        let request_payload = &[0x02, request_payload[0], request_payload[1]];
+        let request_frame =
+            CANFrame::new(broadcast_address.as_raw(), request_payload, false, false)
+                .expect("should never fail to construct broadcast request frame");
 
-            // Wait for a response and attempt to validate it against the request we just sent.
-            let raw_response = socket.read().await?;
-            let response = request.parse_response(&raw_response)?;
+        info!(
+            "Searching for devices via broadcast address {}...",
+            broadcast_address
+        );
+        raw_socket.write(request_frame).await?;
 
-            // Integrate this response and potentially query the next query PID:
-            decoder.integrate_response(response.offset(), response.data());
+        let listen_timeout = sleep(Duration::from_secs(1));
+        pin!(listen_timeout);
+
+        let mut request_ids = HashSet::new();
+        loop {
+            select! {
+                // Stop listening for responses at this point.
+                _ = &mut listen_timeout => break,
+
+                // We got a response, so just keep track of the identifier.  We don't care about the
+                // data at this point since we'll grab that after.
+                result = raw_socket.read() => {
+                    let frame = result?;
+                    let id = frame.id();
+                    match addressing.get_physical_obd_request_id_from_response(id) {
+                        Some(id) => {
+                            request_ids.insert(id);
+                        },
+                        None => panic!("shouldn't have response with ID that can't be converted"),
+                    }
+                },
+            }
         }
 
-        Ok(decoder.into_available_pids())
+        info!(
+            "Discovered {} potential device(s) to query.  Enumerating...",
+            request_ids.len()
+        );
+
+        let mut available_pids = HashMap::new();
+        for request_id in request_ids {
+            let source_id = addressing
+                .get_physical_obd_response_id_from_request_id(request_id)
+                .expect("should not fail");
+
+            info!("Querying {} (sending as {})", request_id, source_id);
+
+            let mut socket = ISOTPSocket::builder()
+                .can_parameters(self.can_parameters.clone())
+                .source_id(source_id)
+                .destination_id(request_id)
+                .build()?;
+
+            let mut decoder = AvailablePidDecoder::new();
+            while let Some(query_pid) = decoder.next_query_pid() {
+                // Build the request and send it.
+                let request = AvailablePidRequest::from_query_pid(query_pid);
+                let payload = request.payload();
+                socket.write(&payload[..]).await?;
+
+                // Wait for a response and attempt to validate it against the request we just sent.
+                let raw_response = socket.read().await?;
+                let response = request.parse_response(&raw_response)?;
+
+                // Integrate this response and potentially query the next query PID:
+                decoder.integrate_response(response.offset(), response.data());
+            }
+
+            available_pids.insert(source_id, decoder.into_available_pids());
+        }
+
+        Ok(available_pids)
     }
 }

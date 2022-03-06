@@ -17,6 +17,7 @@ impl AvailablePidDecoder {
 
     pub fn integrate_response(&mut self, offset: u8, data: [u8; 4]) {
         let should_continue = data[3] & 0x1 == 1;
+
         for i in 0..31 {
             let byte_idx = i as usize / 8;
             let bit_idx = 7 - (i as usize % 8);
@@ -24,6 +25,12 @@ impl AvailablePidDecoder {
             if data[byte_idx] & (1 << bit_idx) > 0 {
                 trace!("pid query: {:02x}, data[{}]: {:08b}, bit: {}, present: true (actual pid: 0x{:02x})",
                     offset, byte_idx, data[byte_idx], bit_idx, offset + i + 1);
+
+                // TODO: we should really make this an enum that has standardized name mappings, and
+                // then maybe a variant for an unknown mapping?  spitting out raw bytes on the
+                // console isn't great, although i suppose in some case that people may prefer that
+                // vs names... also would want to make sure we used whatever the standardized name
+                // was, not just whatever wikipedia happens to have
                 self.pids.push(offset + i + 1);
             }
         }

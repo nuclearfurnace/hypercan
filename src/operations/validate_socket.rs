@@ -1,8 +1,8 @@
 use async_trait::async_trait;
-use embedded_can::StandardId;
+use can::identifier::StandardId;
 use tracing::{error, info};
 
-use crate::protocol::isotp::ISOTPSocket;
+use crate::{common::config::CANParameters, protocol::can::isotp::ISOTPSocket};
 
 use super::Operation;
 
@@ -11,9 +11,10 @@ pub struct ValidateSocket;
 
 #[async_trait]
 impl Operation for ValidateSocket {
-    async fn run(self, socket_name: String) {
+    async fn run(self, can_parameters: CANParameters) {
+        let socket_name = can_parameters.socket_name.clone();
         let socket_builder = ISOTPSocket::builder()
-            .socket_name(socket_name.clone())
+            .can_parameters(can_parameters)
             .source_id(StandardId::ZERO)
             .destination_id(StandardId::MAX);
         match socket_builder.build() {

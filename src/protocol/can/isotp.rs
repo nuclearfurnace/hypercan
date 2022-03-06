@@ -5,59 +5,24 @@ use std::{
     time::Duration,
 };
 
-use embedded_can::Id;
+use can::identifier::Id;
 use futures::ready;
 use mio::{event::Source, unix::SourceFd, Interest, Registry, Token};
-use socketcan_isotp::{Error as IsoTpError, IsoTpBehaviour, IsoTpOptions, IsoTpSocket};
-use thiserror::Error;
+use socketcan_isotp::{IsoTpBehaviour, IsoTpOptions, IsoTpSocket};
 use tokio::{io::unix::AsyncFd, macros::support::poll_fn, time::timeout};
 
-#[derive(Debug, Error)]
-pub enum SocketBuildError {
-    #[error("required field was not configured: {field_name}")]
-    MissingRequiredField { field_name: &'static str },
-    #[error("the specified socket was not found")]
-    SocketNotFound,
-    #[error("I/O error while building the ISO-TP socket: {source}")]
-    Io {
-        #[from]
-        source: io::Error,
-    },
-}
+use crate::common::config::CANParameters;
 
-impl From<IsoTpError> for SocketBuildError {
-    fn from(ie: IsoTpError) -> Self {
-        match ie {
-            IsoTpError::Lookup { .. } => SocketBuildError::SocketNotFound,
-            IsoTpError::Io { source } => SocketBuildError::Io { source },
-        }
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum SocketError {
-    #[error("I/O error: {0}")]
-    Io(#[from] io::Error),
-    #[error("operation timed out after {0:?}")]
-    Timeout(Duration),
-}
+use super::error::{SocketBuildError, SocketError};
 
 #[derive(Default)]
 pub struct ISOTPSocketBuilder {
-    socket_name: Option<String>,
     source_id: Option<Id>,
     destination_id: Option<Id>,
-    use_isotp_frame_padding: bool,
-    read_timeout: Option<Duration>,
-    write_timeout: Option<Duration>,
+    can_parameters: Option<CANParameters>,
 }
 
 impl ISOTPSocketBuilder {
-    pub fn socket_name(mut self, socket_name: String) -> Self {
-        self.socket_name = Some(socket_name);
-        self
-    }
-
     pub fn source_id(mut self, id: impl Into<Id>) -> Self {
         self.source_id = Some(id.into());
         self
@@ -68,27 +33,12 @@ impl ISOTPSocketBuilder {
         self
     }
 
-    pub fn use_isotp_frame_padding(mut self) -> Self {
-        self.use_isotp_frame_padding = true;
-        self
-    }
-
-    pub fn read_timeout(mut self, timeout: Duration) -> Self {
-        self.read_timeout = Some(timeout);
-        self
-    }
-
-    pub fn write_timeout(mut self, timeout: Duration) -> Self {
-        self.write_timeout = Some(timeout);
+    pub fn can_parameters(mut self, params: CANParameters) -> Self {
+        self.can_parameters = Some(params);
         self
     }
 
     pub fn build(self) -> Result<ISOTPSocket, SocketBuildError> {
-        let socket_name = self
-            .socket_name
-            .ok_or(SocketBuildError::MissingRequiredField {
-                field_name: "socket_name",
-            })?;
         let source_id = self
             .source_id
             .ok_or(SocketBuildError::MissingRequiredField {
@@ -99,10 +49,15 @@ impl ISOTPSocketBuilder {
             .ok_or(SocketBuildError::MissingRequiredField {
                 field_name: "destination_id",
             })?;
+        let can_parameters = self
+            .can_parameters
+            .ok_or(SocketBuildError::MissingRequiredField {
+                field_name: "can_parameters",
+            })?;
 
         let mut isotp_options = IsoTpOptions::default();
-        if self.use_isotp_frame_padding {
-            isotp_options.set_txpad_content(0xCC);
+        if can_parameters.isotp_frame_padding {
+            isotp_options.set_txpad_content(can_parameters.tx_frame_padding);
 
             let new_flags = isotp_options
                 .get_flags()
@@ -113,7 +68,7 @@ impl ISOTPSocketBuilder {
         }
 
         let socket = IsoTpSocket::open_with_opts(
-            socket_name.as_ref(),
+            can_parameters.socket_name.as_ref(),
             source_id,
             destination_id,
             Some(isotp_options),
@@ -124,8 +79,8 @@ impl ISOTPSocketBuilder {
 
         Ok(ISOTPSocket {
             inner: AsyncFd::new(EventedISOTPSocket { inner: socket })?,
-            default_read_timeout: self.read_timeout,
-            default_write_timeout: self.write_timeout,
+            default_read_timeout: Some(can_parameters.read_timeout),
+            default_write_timeout: Some(can_parameters.write_timeout),
         })
     }
 }
