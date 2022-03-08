@@ -56,7 +56,7 @@ impl ISOTPSocketBuilder {
             })?;
 
         let mut isotp_options = IsoTpOptions::default();
-        if can_parameters.isotp_frame_padding {
+        if !can_parameters.disable_isotp_frame_padding {
             isotp_options.set_txpad_content(can_parameters.tx_frame_padding);
 
             let new_flags = isotp_options

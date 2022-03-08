@@ -116,7 +116,7 @@ impl CurrentDataService {
         let request_payload = broadcast_request.payload();
         let request_payload = &[0x02, request_payload[0], request_payload[1]];
         let request_frame =
-            CANFrame::new(broadcast_address.as_raw(), request_payload, false, false)
+            CANFrame::new(broadcast_address.id().as_raw(), request_payload, false, false)
                 .expect("should never fail to construct broadcast request frame");
 
         info!(
@@ -128,7 +128,7 @@ impl CurrentDataService {
         let listen_timeout = sleep(Duration::from_secs(1));
         pin!(listen_timeout);
 
-        let mut request_ids = HashSet::new();
+        let mut response_ids = HashSet::new();
         loop {
             select! {
                 // Stop listening for responses at this point.
@@ -139,9 +139,9 @@ impl CurrentDataService {
                 result = raw_socket.read() => {
                     let frame = result?;
                     let id = frame.id();
-                    match addressing.get_physical_obd_request_id_from_response(id) {
+                    match addressing.get_diagnostic_response_id(id) {
                         Some(id) => {
-                            request_ids.insert(id);
+                            response_ids.insert(id);
                         },
                         None => panic!("shouldn't have response with ID that can't be converted"),
                     }
@@ -151,20 +151,18 @@ impl CurrentDataService {
 
         info!(
             "Discovered {} potential device(s) to query.  Enumerating...",
-            request_ids.len()
+            response_ids.len()
         );
 
         let mut available_pids = HashMap::new();
-        for request_id in request_ids {
-            let source_id = addressing
-                .get_physical_obd_response_id_from_request_id(request_id)
-                .expect("should not fail");
+        for response_id in response_ids {
+            let request_id = response_id.into_request_address();
 
-            info!("Querying {} (sending as {})", request_id, source_id);
+            info!("Querying device at {}...", request_id);
 
             let mut socket = ISOTPSocket::builder()
                 .can_parameters(self.can_parameters.clone())
-                .source_id(source_id)
+                .source_id(response_id)
                 .destination_id(request_id)
                 .build()?;
 
@@ -183,7 +181,7 @@ impl CurrentDataService {
                 decoder.integrate_response(response.offset(), response.data());
             }
 
-            available_pids.insert(source_id, decoder.into_available_pids());
+            available_pids.insert(request_id.id(), decoder.into_available_pids());
         }
 
         Ok(available_pids)

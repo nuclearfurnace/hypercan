@@ -54,7 +54,7 @@ pub struct CANParameters {
     pub write_timeout: Duration,
 
     #[clap(long)]
-    pub isotp_frame_padding: bool,
+    pub disable_isotp_frame_padding: bool,
 
     #[clap(long, default_value_t = 0xCC)]
     pub tx_frame_padding: u8,
